@@ -4,12 +4,15 @@ namespace CommerceGuys\Guzzle\Oauth2;
 
 use CommerceGuys\Guzzle\Oauth2\GrantType\GrantTypeInterface;
 use CommerceGuys\Guzzle\Oauth2\GrantType\RefreshTokenGrantTypeInterface;
-use GuzzleHttp\Event\BeforeEvent;
-use GuzzleHttp\Event\ErrorEvent;
-use GuzzleHttp\Event\RequestEvents;
-use GuzzleHttp\Event\SubscriberInterface;
 
-class Oauth2Subscriber implements SubscriberInterface
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use GuzzleHttp\MessageFormatter;
+use GuzzleHttp\Promise;
+use Psr\Http\Message\StreamInterface;
+
+
+class Oauth2Subscriber
 {
 
     /** @var AccessToken|null */
@@ -35,33 +38,40 @@ class Oauth2Subscriber implements SubscriberInterface
     }
 
     /**
-     * @inheritdoc
+     * Called when the middleware is handled.
+     *
+     * @param callable $handler
+     *
+     * @return \Closure
      */
-    public function getEvents()
+    public function __invoke(callable $handler)
     {
-        return [
-            'before' => ['onBefore', RequestEvents::SIGN_REQUEST],
-            'error' => ['onError', RequestEvents::EARLY],
-        ];
+        return function ($request, array $options) use ($handler) {
+
+            if (isset($options['auth']) && $options['auth'] == 'oauth2')
+                $request = $this->onBefore($request);
+
+            return $handler($request, $options);
+        };
     }
 
     /**
      * @inheritdoc
      */
-    public function onError(ErrorEvent $event)
-    {
-        $response = $event->getResponse();
-        if ($response && 401 == $response->getStatusCode()) {
-            $request = $event->getRequest();
-            if ($request->getConfig()->get('auth') == 'oauth2' && !$request->getConfig()->get('retried')) {
-                if ($token = $this->acquireAccessToken()) {
-                    $this->accessToken = $token;
-                    $request->getConfig()->set('retried', true);
-                    $event->intercept($event->getClient()->send($request));
-                }
-            }
-        }
-    }
+//     public function onError(ErrorEvent $event)
+//     {
+//         $response = $event->getResponse();
+//         if ($response && 401 == $response->getStatusCode()) {
+//             $request = $event->getRequest();
+//             if ($request->getConfig()->get('auth') == 'oauth2' && !$request->getConfig()->get('retried')) {
+//                 if ($token = $this->acquireAccessToken()) {
+//                     $this->accessToken = $token;
+//                     $request->getConfig()->set('retried', true);
+//                     $event->intercept($event->getClient()->send($request));
+//                 }
+//             }
+//         }
+//     }
 
     /**
      * Get a new access token.
@@ -90,20 +100,21 @@ class Oauth2Subscriber implements SubscriberInterface
         return $accessToken ?: null;
     }
 
-    /**
-     * Add the Authorization header to requests.
-     *
-     * @param BeforeEvent $event Event received
-     */
-    public function onBefore(BeforeEvent $event)
+   /**
+    * Add the Authorization header to requests.
+    *
+    * @param RequestInterface $request
+    * @return RequestInterface
+    */
+    public function onBefore(RequestInterface $request)
     {
-        $request = $event->getRequest();
-        if ($request->getConfig()->get('auth') == 'oauth2') {
-            $token = $this->getAccessToken();
-            if ($token !== null) {
-                $request->setHeader('Authorization', 'Bearer ' . $token->getToken());
-            }
-        }
+		$token = $this->getAccessToken();
+
+		if ($token !== null) {
+			list($header, $value) = ['Authorization', 'Bearer ' . $token->getToken()];
+			$request = $request->withHeader($header, $value);
+		}
+    	return $request;
     }
 
     /**

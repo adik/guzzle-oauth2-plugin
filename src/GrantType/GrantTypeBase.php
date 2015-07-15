@@ -4,14 +4,13 @@ namespace CommerceGuys\Guzzle\Oauth2\GrantType;
 
 use CommerceGuys\Guzzle\Oauth2\AccessToken;
 use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Collection;
 
 abstract class GrantTypeBase implements GrantTypeInterface
 {
     /** @var ClientInterface The token endpoint client */
     protected $client;
 
-    /** @var Collection Configuration settings */
+    /** @var array */
     protected $config;
 
     /** @var string */
@@ -24,7 +23,16 @@ abstract class GrantTypeBase implements GrantTypeInterface
     public function __construct(ClientInterface $client, array $config = [])
     {
         $this->client = $client;
-        $this->config = Collection::fromConfig($config, $this->getDefaults(), $this->getRequired());
+
+        $data = $config + $this->getDefaults();
+
+        if ($missing = array_diff($this->getRequired(), array_keys($data))) {
+        	throw new \InvalidArgumentException(
+        			'Config is missing the following keys: ' .
+        			implode(', ', $missing));
+        }
+
+        $this->config = $data;
     }
 
     /**
@@ -67,10 +75,11 @@ abstract class GrantTypeBase implements GrantTypeInterface
      */
     public function getToken()
     {
-        $config = $this->config->toArray();
+    	$config = $this->config;
 
         $body = $config;
         $body['grant_type'] = $this->grantType;
+
         unset($body['token_url'], $body['auth_location']);
 
         $requestOptions = [];
@@ -80,14 +89,14 @@ abstract class GrantTypeBase implements GrantTypeInterface
             unset($body['client_id'], $body['client_secret']);
         }
 
-        $requestOptions['body'] = $body;
+        $requestOptions['json'] = $body;
 
         if ($additionalOptions = $this->getAdditionalOptions()) {
             $requestOptions = array_merge_recursive($requestOptions, $additionalOptions);
         }
 
         $response = $this->client->post($config['token_url'], $requestOptions);
-        $data = $response->json();
+        $data = json_decode( $response->getBody(), TRUE);
 
         return new AccessToken($data['access_token'], $data['token_type'], $data);
     }
